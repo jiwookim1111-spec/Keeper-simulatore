@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#102b20">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Keeper 3D</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102b20;color:#fff;font-family:system-ui,-apple-system,sans-serif;touch-action:none}
+#game{position:absolute;inset:0;width:100%;height:100%;display:block}
+.hud{position:absolute;inset:0;pointer-events:none;padding:calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 12px)}
+.top{display:flex;justify-content:space-between;align-items:flex-start}.pill{background:#07160fbb;border:1px solid #ffffff33;border-radius:14px;padding:8px 13px;font-weight:700;text-shadow:0 1px 3px #000}
+#msg{position:absolute;top:13%;left:50%;transform:translateX(-50%);white-space:nowrap;font-weight:800;font-size:clamp(16px,3vw,25px);text-shadow:0 2px 5px #000}
+.controls{position:absolute;inset:0;pointer-events:none}
+#stick{position:absolute;left:max(22px,4vw);bottom:max(22px,5vh);width:142px;height:142px;border-radius:50%;background:#06130c88;border:2px solid #ffffff66;pointer-events:auto;touch-action:none}
+#knob{position:absolute;width:58px;height:58px;left:40px;top:40px;border-radius:50%;background:#e8f0eddd;border:2px solid #fff;box-shadow:0 3px 12px #0008}
+.action{position:absolute;bottom:max(26px,6vh);border:0;border-radius:50%;color:white;font-weight:800;box-shadow:0 5px 18px #0008;border:2px solid #ffffff88;pointer-events:auto;touch-action:none}
+#dive{right:calc(max(24px,5vw) + 118px);width:112px;height:112px;background:#176fc9dd;font-size:17px}
+#jump{right:max(24px,5vw);width:96px;height:96px;background:#168b5add;font-size:19px}
+#start{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:14px 22px;border:0;border-radius:14px;background:#e7f0eb;color:#102b20;font-size:17px;font-weight:900;box-shadow:0 5px 20px #0008}
+#hint{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);font-size:11px;color:#ffffffb8;white-space:nowrap}
+@media(orientation:portrait){#rotate{display:flex}}
+#rotate{display:none;position:absolute;inset:0;background:#0c2118;z-index:10;align-items:center;justify-content:center;text-align:center;padding:35px;font-weight:800;font-size:20px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="rotate">Keeper 3D<br><br>더 좋은 플레이를 위해<br>휴대폰을 가로로 돌려주세요 ↻</div>
+<div class="hud">
+ <div class="top"><div class="pill" id="score">선방 0　실점 0</div><div class="pill">KEEPER 3D · 훈련</div></div>
+ <div id="msg">골문을 지켜보세요!</div>
+ <button id="start">훈련 시작</button>
+ <div id="hint">왼쪽 조이스틱 이동 · 다이빙 버튼을 누르고 방향으로 밀기 · 점프</div>
+</div>
+<div class="controls">
+ <div id="stick"><div id="knob"></div></div>
+ <button class="action" id="dive">다이빙</button>
+ <button class="action" id="jump">점프</button>
+</div>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const msg=document.getElementById('msg'),scoreEl=document.getElementById('score'),startBtn=document.getElementById('start');
+let W=0,H=0,dpr=1,started=false,saves=0,goals=0,keeper={x:0,y:0,z:0,jump:0,dive:0},ball=null,move={x:0,y:0},diveStart=null,last=0,shotWait=1;
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+function poly(points,fill,stroke=null,lw=1){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw;ctx.stroke()}}
+function line(points,color,width=2){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
+function project(x,y,z){let horizon=H*.30, scale=.52+((z+12)/18)*.45;return [W/2+x*W*.045*scale,horizon+(H*.72)+(y*-H*.19*scale)+(z+12)*H*.014]}
+function drawScene(){
+ let sky=ctx.createLinearGradient(0,0,0,H*.52);sky.addColorStop(0,'#6389a7');sky.addColorStop(1,'#d2d9d4');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ // distant stand
+ ctx.fillStyle='#263d43';ctx.fillRect(0,H*.25,W,H*.19);
+ for(let i=0;i<85;i++){ctx.fillStyle=['#d5d9d5','#9caaa5','#e0d4b8','#526d76'][i%4];ctx.fillRect(i*W/85,H*.27+(i%5)*5,W/110, H*.09)}
+ // field perspective
+ poly([[W*.05,H*.46],[W*.95,H*.46],[W*1.2,H],[W*-.2,H]],'#1e6338');
+ for(let i=0;i<9;i++){let yy=H*.48+i*H*.07;ctx.fillStyle=i%2?'#216b3d':'#1d6036';ctx.fillRect(0,yy,W,H*.07)}
+ // penalty box markings
+ line([[W*.19,H*.53],[W*.81,H*.53],[W*.92,H*.98]],'#e8eee5',2);
+ line([[W*.19,H*.53],[W*.08,H*.98]],'#e8eee5',2);
+ line([[W*.35,H*.68],[W*.65,H*.68],[W*.75,H*.99]],'#e8eee5',2);
+ line([[W*.35,H*.68],[W*.25,H*.99]],'#e8eee5',2);
+ // goal
+ let gx=W*.5, gy=H*.39, gw=W*.34, gh=H*.26;
+ ctx.fillStyle='#dce4e5';ctx.fillRect(gx-gw/2,gy,gw,gh);
+ ctx.fillStyle='#1d4c34';ctx.fillRect(gx-gw/2+5,gy+5,gw-10,gh-5);
+ ctx.strokeStyle='#f5f5f0';ctx.lineWidth=Math.max(5,W*.006);ctx.strokeRect(gx-gw/2,gy,gw,gh);
+ ctx.strokeStyle='#aebfc0';ctx.lineWidth=1;
+ for(let i=1;i<12;i++){let xx=gx-gw/2+i*gw/12;line([[xx,gy],[xx,gy+gh]],'#b8c8c7',1)}
+ for(let i=1;i<7;i++){let yy=gy+i*gh/7;line([[gx-gw/2,yy],[gx+gw/2,yy]],'#b8c8c7',1)}
+ // goalkeeper shadow + avatar
+ let kx=W*.5+keeper.x*W*.045, ky=H*.82-keeper.z*H*.012-keeper.jump;
+ ctx.fillStyle='#07130c66';ctx.beginPath();ctx.ellipse(kx,ky+8,30,9,0,0,Math.PI*2);ctx.fill();
+ let lean=keeper.dive*0.5;
+ ctx.save();ctx.translate(kx,ky);ctx.rotate(lean);
+ // legs
+ ctx.strokeStyle='#111b25';ctx.lineWidth=13;ctx.lineCap='round';line([[-9,0],[-14,27]],'#111b25',13);line([[9,0],[14,27]],'#111b25',13);
+ // torso
+ ctx.fillStyle='#e2e9ed';ctx.beginPath();ctx.roundRect(-22,-58,44,61,10);ctx.fill();
+ ctx.fillStyle='#183caa';ctx.beginPath();ctx.roundRect(-19,-55,38,54,8);ctx.fill();
+ // arms and gloves
+ line([[-18,-44],[-35,-20],[-42,-10]],'#183caa',13);line([[18,-44],[35,-20],[42,-10]],'#183caa',13);
+ ctx.fillStyle='#f2d84c';ctx.beginPath();ctx.arc(-43,-8,9,0,Math.PI*2);ctx.arc(43,-8,9,0,Math.PI*2);ctx.fill();
+ // head
+ ctx.fillStyle='#b87954';ctx.beginPath();ctx.arc(0,-72,17,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#30251f';ctx.beginPath();ctx.arc(0,-83,17,Math.PI,Math.PI*2);ctx.fill();
+ ctx.restore();
+ // ball
+ if(ball){let p=ballScreen();ctx.fillStyle='#0007';ctx.beginPath();ctx.ellipse(p.x,p.y+9,12,4,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#f4f2e8';ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#29333a';ctx.lineWidth=2;ctx.stroke();ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.stroke()}
+}
+function ballScreen(){let s=project(ball.x,ball.y,ball.z);return{x:s[0],y:s[1]}}
+function spawn(){let sx=(Math.random()*8-4),sy=.5+Math.random()*1.1;let tx=(Math.random()*6.2-3.1),ty=.35+Math.random()*1.9;ball={x:sx,y:sy,z:-11,vx:(tx-sx)/.72,vy:(ty-sy)/.72,vz:17,age:0};msg.textContent='슛! 방향을 읽고 막아보세요!'}
+function update(dt){if(!started)return;
+ keeper.x=Math.max(-7.5,Math.min(7.5,keeper.x+move.x*5*dt));keeper.z=Math.max(-5,Math.min(1,keeper.z+move.y*4*dt));
+ keeper.jump=Math.max(0,keeper.jump-dt*170);keeper.dive*=Math.max(0,1-dt*2.5);
+ if(ball){ball.age+=dt;ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;ball.z+=ball.vz*dt;ball.y-=3.6*dt*dt;ball.vy-=7.2*dt;
+ let kx=keeper.x, ky=1.05+keeper.jump/100;
+ if(Math.abs(ball.z-keeper.z)<.75 && Math.abs(ball.x-kx)<1.0 && ball.y<ky+1.25 && ball.y>0.05){saves++;score();ball=null;msg.textContent='선방 성공!';shotWait=1.3}
+ else if(ball.z>1.4){if(Math.abs(ball.x)<3.66&&ball.y<2.44){goals++;score();msg.textContent='실점! 다음 슛을 준비하세요'}ball=null;shotWait=1.5}
+ else if(ball.z>5||ball.y<-.5){ball=null;shotWait=1}
+ }else{shotWait-=dt;if(shotWait<=0)spawn()}
+}
+function score(){scoreEl.textContent=`선방 ${saves}　실점 ${goals}`}
+function loop(t){let dt=Math.min((t-last)/1000||0,.04);last=t;update(dt);drawScene();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+const stick=document.getElementById('stick'),knob=document.getElementById('knob');let stickId=null;
+function stickMove(e){let r=stick.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,dx=e.clientX-cx,dy=e.clientY-cy,m=Math.min(48,Math.hypot(dx,dy)),a=Math.atan2(dy,dx);dx=Math.cos(a)*m;dy=Math.sin(a)*m;move={x:dx/48,y:dy/48};knob.style.transform=`translate(${dx}px,${dy}px)`}
+stick.addEventListener('pointerdown',e=>{stickId=e.pointerId;stick.setPointerCapture(stickId);stickMove(e)});stick.addEventListener('pointermove',e=>{if(e.pointerId===stickId)stickMove(e)});function stickEnd(e){if(e.pointerId===stickId){stickId=null;move={x:0,y:0};knob.style.transform='translate(0,0)'}}stick.addEventListener('pointerup',stickEnd);stick.addEventListener('pointercancel',stickEnd);
+const dive=document.getElementById('dive');dive.addEventListener('pointerdown',e=>{diveStart={x:e.clientX,y:e.clientY};dive.setPointerCapture(e.pointerId)});dive.addEventListener('pointerup',e=>{if(!diveStart)return;let dx=e.clientX-diveStart.x;keeper.x=Math.max(-7.5,Math.min(7.5,keeper.x+Math.sign(dx||1)*2.2));keeper.jump=Math.max(keeper.jump,Math.abs(dx)*.45+30);keeper.dive=Math.sign(dx||1)*.55;diveStart=null;msg.textContent='다이빙!'});document.getElementById('jump').addEventListener('pointerdown',()=>{keeper.jump=115;msg.textContent='점프!'});
+startBtn.addEventListener('click',()=>{started=true;startBtn.style.display='none';msg.textContent='훈련 시작! 슛을 막아보세요';spawn()});
+addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='a')move.x=-1;if(e.key==='ArrowRight'||e.key==='d')move.x=1;if(e.key==='ArrowUp'||e.key==='w')move.y=-1;if(e.key==='ArrowDown'||e.key==='s')move.y=1;if(e.key===' ')keeper.jump=115});addEventListener('keyup',()=>move={x:0,y:0});
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+</script>
+</body></html>
